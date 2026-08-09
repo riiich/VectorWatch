@@ -1,0 +1,16 @@
+/build/
+
+# Local AI tooling and instructions
+.agents/
+.codex/
+.opencode/
+.claude/
+.continue/
+.cursor/
+.windsurf/
+.aider*
+AGENTS.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+.github/copilot-instructions.md
