@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vectorwatch/Aircraft.hpp"
+#include "vectorwatch/model/Aircraft.hpp"
 
 namespace vectorwatch {
 

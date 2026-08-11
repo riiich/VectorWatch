@@ -19,6 +19,7 @@ Requirements:
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
+ctest --test-dir build --output-on-failure
 ./build/vectorwatch
 ```
 
@@ -30,11 +31,23 @@ scenario by name with:
 ./build/vectorwatch parallel
 ./build/vectorwatch crossing
 ./build/vectorwatch different-altitudes
+./build/vectorwatch near-miss
+./build/vectorwatch staggered-crossing
+./build/vectorwatch offset-convergence
+./build/vectorwatch vertical-convergence
+./build/vectorwatch diverging
+./build/vectorwatch outside-lookahead
 ```
 
 Use `./build/vectorwatch --help` to list the available scenarios. A successful
 run exits with status 0. A scenario that disagrees with its expected result
 exits with status 1.
+
+Use the dedicated scenario catalog for an at-a-glance list with descriptions:
+
+```bash
+./build/vectorwatch --list-scenarios
+```
 
 ## Terminal simulation
 
@@ -60,6 +73,19 @@ At 1x, one real second equals one simulated second. Higher values accelerate
 the same simulation calculations; they do not skip directly to a stored result.
 Use `Ctrl+C` to stop a running simulation early.
 
+## Collision handling
+
+Conflict prediction and physical collision are separate concepts. A conflict
+uses the configurable horizontal and vertical separation thresholds described
+below. A collision occurs when the aircraft centers come within 50 meters in
+3D space. This is a project-specific simulation value, not an aircraft dimension
+or an operational aviation standard.
+
+Before applying each movement update, the simulation checks the complete motion
+segment for a collision. This prevents accelerated simulation steps from
+skipping over an impact. On collision, the terminal plays a short ASCII
+explosion animation at the impact position and ends the simulation immediately.
+
 ## CPA model
 
 For aircraft A and B, the detector first changes the problem into relative
@@ -84,10 +110,14 @@ TCPA = -(r dot v) / (v dot v)
 ```
 
 The implementation clamps this time to the interval from now through the
-120-second lookahead. It then calculates the horizontal and vertical
-separations separately at that time. A result is classified as a conflict only
-when the original TCPA lies inside the lookahead and both project-specific
-thresholds are crossed:
+120-second lookahead for CPA reporting. It calculates horizontal and vertical
+separation separately at that time.
+
+Conflict classification does not require the aircraft to meet at one exact
+coordinate or cross both thresholds at the reported 3D CPA. The detector solves
+for the future interval during which horizontal separation is below its
+threshold and the interval during which vertical separation is below its
+threshold. A conflict exists when those intervals overlap inside the lookahead:
 
 ```text
 horizontal separation < 1000 m
@@ -96,34 +126,61 @@ vertical separation   < 150 m
 
 These values are simulation settings, not operational aviation standards.
 
-When relative velocity is zero or extremely small, division by zero is avoided.
-The aircraft keep their current separation, so the current instant is used as
-their CPA.
+This interval approach handles near misses, different arrival times, vertical
+convergence, and cases where the minimum 3D distance is not itself inside both
+thresholds. When relative velocity is zero or extremely small, division by zero
+is avoided. The aircraft keep their current separation, so the current instant
+is used as their CPA.
 
 ## Project layout
 
 ```text
 CMakeLists.txt
 include/vectorwatch/
-  Aircraft.hpp
-  ConflictDetector.hpp
-  TerminalSimulation.hpp
-  Vector3.hpp
+  app/
+    Application.hpp
+  detection/
+    CollisionDetector.hpp
+    ConflictDetector.hpp
+  math/
+    Vector3.hpp
+  model/
+    Aircraft.hpp
+  scenarios/
+    Scenario.hpp
+    ScenarioCatalog.hpp
+  simulation/
+    TerminalRadarRenderer.hpp
+    TerminalSimulation.hpp
+    TerminalSimulationOptions.hpp
 src/
-  ConflictDetector.cpp
-  TerminalSimulation.cpp
+  app/Application.cpp
+  detection/CollisionDetector.cpp
+  detection/ConflictDetector.cpp
   main.cpp
+  model/Aircraft.cpp
+  scenarios/ScenarioCatalog.cpp
+  simulation/TerminalRadarRenderer.cpp
+  simulation/TerminalSimulation.cpp
+tests/
+  CollisionDetectorTests.cpp
+  ConflictDetectorTests.cpp
 ```
 
 - `Vector3` supplies the vector operations needed by the CPA calculation.
 - `Aircraft` owns an ID, position, velocity, and the basic position update.
 - `ConflictDetector` performs relative-motion and CPA calculations.
-- `TerminalSimulation` owns the timed loop and ASCII radar rendering.
-- `main.cpp` contains the CLI and four intentionally hardcoded scenarios.
+- `CollisionDetector` detects physical impacts across simulation updates.
+- `ScenarioCatalog` owns the built-in scenario definitions and lookup.
+- `TerminalSimulation` owns the timed update loop.
+- `TerminalRadarRenderer` owns the ASCII radar presentation.
+- `Application` handles CLI commands and coordinates the other components.
+- `main.cpp` is the minimal executable entry point.
 
 ## Current scope
 
-This version intentionally has no SFML, web framework, GoogleTest, JSON
-dependency, conflict lifecycle, spatial grid, or threads. It currently
-simulates one aircraft pair at a time. Scenario loading and simulation of many
-aircraft should come before the browser visualization.
+This version intentionally has no web framework, GoogleTest, JSON dependency,
+conflict lifecycle, spatial grid, or worker threads. It currently simulates one
+aircraft pair at a time. SFML is not planned; the terminal remains the working
+interface until the engine is ready for a browser visualization. Scenario
+loading and simulation of many aircraft should come before that web interface.

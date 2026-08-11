@@ -1,15 +1,12 @@
-#include "vectorwatch/TerminalSimulation.hpp"
+#include "vectorwatch/simulation/TerminalRadarRenderer.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
-#include <stdexcept>
-#include <string>
 #include <thread>
-#include <vector>
 
 #include <unistd.h>
 
@@ -19,52 +16,47 @@ namespace {
 constexpr int radarWidth = 61;
 constexpr int radarHeight = 21;
 
-struct Bounds {
-    double minimumX;
-    double maximumX;
-    double minimumY;
-    double maximumY;
-};
+} // namespace
 
-struct GridPoint {
-    int x;
-    int y;
-};
-
-[[nodiscard]] Bounds calculateBounds(
+TerminalRadarRenderer::TerminalRadarRenderer(
     const Aircraft& aircraftA,
     const Aircraft& aircraftB,
-    double durationSeconds) {
+    double durationSeconds)
+    : redrawInPlace_{isatty(STDOUT_FILENO) != 0} {
     const Vector3 endA =
         aircraftA.position() + (aircraftA.velocity() * durationSeconds);
     const Vector3 endB =
         aircraftB.position() + (aircraftB.velocity() * durationSeconds);
 
-    double minimumX = std::min(
+    minimumX_ = std::min(
         {aircraftA.position().x, aircraftB.position().x, endA.x, endB.x});
-    double maximumX = std::max(
+    maximumX_ = std::max(
         {aircraftA.position().x, aircraftB.position().x, endA.x, endB.x});
-    double minimumY = std::min(
+    minimumY_ = std::min(
         {aircraftA.position().y, aircraftB.position().y, endA.y, endB.y});
-    double maximumY = std::max(
+    maximumY_ = std::max(
         {aircraftA.position().y, aircraftB.position().y, endA.y, endB.y});
 
-    const double xPadding = std::max((maximumX - minimumX) * 0.1, 1'000.0);
-    const double yPadding = std::max((maximumY - minimumY) * 0.1, 1'000.0);
-
-    minimumX -= xPadding;
-    maximumX += xPadding;
-    minimumY -= yPadding;
-    maximumY += yPadding;
-
-    return {minimumX, maximumX, minimumY, maximumY};
+    const double xPadding = std::max((maximumX_ - minimumX_) * 0.1, 1'000.0);
+    const double yPadding = std::max((maximumY_ - minimumY_) * 0.1, 1'000.0);
+    minimumX_ -= xPadding;
+    maximumX_ += xPadding;
+    minimumY_ -= yPadding;
+    maximumY_ += yPadding;
 }
 
-[[nodiscard]] GridPoint toGrid(const Vector3& position, const Bounds& bounds) {
+void TerminalRadarRenderer::prepareTerminal() const {
+    if (redrawInPlace_) {
+        std::cout << "\x1b[2J";
+    }
+}
+
+TerminalRadarRenderer::GridPoint TerminalRadarRenderer::toGrid(
+    const Vector3& position) const {
     const double normalizedX =
-        (position.x - bounds.minimumX) / (bounds.maximumX - bounds.minimumX);
+        (position.x - minimumX_) / (maximumX_ - minimumX_);
     const double normalizedY =
-        (position.y - bounds.minimumY) / (bounds.maximumY - bounds.minimumY);
+        (position.y - minimumY_) / (maximumY_ - minimumY_);
 
     const int x = std::clamp(
         static_cast<int>(std::lround(normalizedX * (radarWidth - 1))),
@@ -78,7 +70,7 @@ struct GridPoint {
     return {x, y};
 }
 
-void drawPath(
+void TerminalRadarRenderer::drawPath(
     std::vector<std::string>& radar,
     GridPoint start,
     GridPoint end) {
@@ -103,7 +95,7 @@ void drawPath(
     }
 }
 
-void drawMarker(
+void TerminalRadarRenderer::drawMarker(
     std::vector<std::string>& radar,
     GridPoint position,
     char marker) {
@@ -115,25 +107,27 @@ void drawMarker(
     }
 }
 
-[[nodiscard]] std::string conflictStatus(const ClosestApproach& approach) {
+std::string_view TerminalRadarRenderer::conflictStatus(
+    const ClosestApproach& approach) noexcept {
+    if (approach.conflict) {
+        return "PREDICTED CONFLICT";
+    }
     if (!approach.hasRelativeMotion) {
         return "NO RELATIVE MOTION";
     }
     if (!approach.isWithinLookahead) {
         return "NO FUTURE CONFLICT";
     }
-    return approach.conflict ? "PREDICTED CONFLICT" : "CLEAR";
+    return "CLEAR";
 }
 
-void renderFrame(
+void TerminalRadarRenderer::render(
     std::string_view scenarioName,
     const Aircraft& aircraftA,
     const Aircraft& aircraftB,
     const ClosestApproach& approach,
-    const Bounds& bounds,
     const TerminalSimulationOptions& options,
-    double simulationTime,
-    bool redrawInPlace) {
+    double simulationTime) const {
     std::vector<std::string> radar(
         radarHeight,
         std::string(static_cast<std::size_t>(radarWidth), ' '));
@@ -148,25 +142,19 @@ void renderFrame(
         aircraftA.position() + (aircraftA.velocity() * projectionSeconds);
     const Vector3 projectedB =
         aircraftB.position() + (aircraftB.velocity() * projectionSeconds);
-    drawPath(
-        radar,
-        toGrid(aircraftA.position(), bounds),
-        toGrid(projectedA, bounds));
-    drawPath(
-        radar,
-        toGrid(aircraftB.position(), bounds),
-        toGrid(projectedB, bounds));
+    drawPath(radar, toGrid(aircraftA.position()), toGrid(projectedA));
+    drawPath(radar, toGrid(aircraftB.position()), toGrid(projectedB));
 
     if (approach.hasRelativeMotion && approach.isWithinLookahead) {
         const Vector3 cpaA =
             aircraftA.position() + (aircraftA.velocity() * approach.timeSeconds);
         const Vector3 cpaB =
             aircraftB.position() + (aircraftB.velocity() * approach.timeSeconds);
-        drawMarker(radar, toGrid((cpaA + cpaB) * 0.5, bounds), 'X');
+        drawMarker(radar, toGrid((cpaA + cpaB) * 0.5), 'X');
     }
 
-    drawMarker(radar, toGrid(aircraftA.position(), bounds), 'A');
-    drawMarker(radar, toGrid(aircraftB.position(), bounds), 'B');
+    drawMarker(radar, toGrid(aircraftA.position()), 'A');
+    drawMarker(radar, toGrid(aircraftB.position()), 'B');
 
     const Vector3 currentSeparation =
         aircraftB.position() - aircraftA.position();
@@ -188,7 +176,11 @@ void renderFrame(
     }
 
     frame << '+' << std::string(static_cast<std::size_t>(radarWidth), '-') << "+\n"
-          << "A/B aircraft  . projected path  X predicted CPA  * overlap\n"
+          << "Markers: A/B aircraft  . projected path  X predicted CPA  * overlap\n"
+          << "Acronyms: CPA = Closest Point of Approach\n"
+          << "          TCPA = Time to Closest Point of Approach\n"
+          << "          H-CPA = Horizontal Separation at Closest Point of Approach\n"
+          << "          V-CPA = Vertical Separation at Closest Point of Approach\n"
           << "Status: " << conflictStatus(approach)
           << "  |  TCPA: " << approach.timeSeconds << " s"
           << "  |  H-CPA: " << approach.horizontalSeparationMeters << " m"
@@ -204,75 +196,109 @@ void renderFrame(
           << aircraftB.position().y << "  altitude="
           << aircraftB.position().z << " m\n";
 
-    if (redrawInPlace) {
+    if (redrawInPlace_) {
         std::cout << "\x1b[H";
     }
     std::cout << frame.str() << std::flush;
 }
 
-} // namespace
-
-void runTerminalSimulation(
+void TerminalRadarRenderer::animateCollision(
     std::string_view scenarioName,
-    Aircraft aircraftA,
-    Aircraft aircraftB,
-    const ConflictDetector& detector,
-    TerminalSimulationOptions options) {
-    if (options.speedMultiplier <= 0.0 || options.durationSeconds <= 0.0 ||
-        options.updateRateHz <= 0.0) {
-        throw std::invalid_argument{"Simulation options must be positive"};
-    }
+    const Aircraft& aircraftA,
+    const Aircraft& aircraftB,
+    const Vector3& collisionPosition,
+    double simulationTime) const {
+    constexpr int animationFrameCount = 6;
+    constexpr auto animationDelay = std::chrono::milliseconds{120};
+    const GridPoint center = toGrid(collisionPosition);
 
-    const Bounds bounds =
-        calculateBounds(aircraftA, aircraftB, options.durationSeconds);
-    const bool redrawInPlace = isatty(STDOUT_FILENO) != 0;
-    if (redrawInPlace) {
-        std::cout << "\x1b[2J";
-    }
+    for (int animationFrame = 0;
+         animationFrame < animationFrameCount;
+         ++animationFrame) {
+        std::vector<std::string> radar(
+            radarHeight,
+            std::string(static_cast<std::size_t>(radarWidth), ' '));
+        drawMarker(radar, toGrid(aircraftA.position()), 'A');
+        drawMarker(radar, toGrid(aircraftB.position()), 'B');
 
-    using Clock = std::chrono::steady_clock;
-    const auto frameInterval = std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<double>{1.0 / options.updateRateHz});
-    auto previousFrame = Clock::now();
-    auto nextFrame = previousFrame;
-    double simulationTime = 0.0;
-    bool firstFrame = true;
+        const auto plot = [&](int offsetX, int offsetY, char marker) {
+            const int x = center.x + offsetX;
+            const int y = center.y + offsetY;
+            if (x >= 0 && x < radarWidth && y >= 0 && y < radarHeight) {
+                radar[y][x] = marker;
+            }
+        };
+        const auto plotCardinals = [&](int radius, char marker) {
+            plot(radius, 0, marker);
+            plot(-radius, 0, marker);
+            plot(0, radius, marker);
+            plot(0, -radius, marker);
+        };
+        const auto plotDiagonals = [&](int radius, char marker) {
+            plot(radius, radius, marker);
+            plot(radius, -radius, marker);
+            plot(-radius, radius, marker);
+            plot(-radius, -radius, marker);
+        };
 
-    while (true) {
-        if (!firstFrame) {
-            const auto currentFrame = Clock::now();
-            const double realDeltaSeconds =
-                std::chrono::duration<double>{currentFrame - previousFrame}.count();
-            const double simulationDelta = std::min(
-                realDeltaSeconds * options.speedMultiplier,
-                options.durationSeconds - simulationTime);
-
-            aircraftA.update(simulationDelta);
-            aircraftB.update(simulationDelta);
-            simulationTime += simulationDelta;
-            previousFrame = currentFrame;
-        }
-
-        const ClosestApproach approach = detector.evaluate(aircraftA, aircraftB);
-        renderFrame(
-            scenarioName,
-            aircraftA,
-            aircraftB,
-            approach,
-            bounds,
-            options,
-            simulationTime,
-            redrawInPlace);
-
-        if (simulationTime >= options.durationSeconds) {
+        switch (animationFrame) {
+        case 0:
+            plot(0, 0, 'X');
+            break;
+        case 1:
+            plot(0, 0, '#');
+            plotCardinals(1, '*');
+            break;
+        case 2:
+            plot(0, 0, '@');
+            plotCardinals(2, '*');
+            plotDiagonals(1, '+');
+            break;
+        case 3:
+            plot(0, 0, '#');
+            plotCardinals(1, '*');
+            plotDiagonals(2, '*');
+            plotCardinals(3, '.');
+            break;
+        case 4:
+            plot(0, 0, '*');
+            plotCardinals(2, '+');
+            plotDiagonals(3, '.');
+            break;
+        default:
+            plot(0, 0, '.');
+            plotCardinals(3, '.');
             break;
         }
 
-        nextFrame += frameInterval;
-        std::this_thread::sleep_until(nextFrame);
-        firstFrame = false;
+        std::ostringstream frame;
+        frame << std::fixed << std::setprecision(1)
+              << "VECTORWATCH COLLISION  |  Scenario: " << scenarioName << '\n'
+              << "Simulation stopped at: " << simulationTime << " s\n"
+              << '+' << std::string(static_cast<std::size_t>(radarWidth), '-')
+              << "+\n";
+        for (const auto& row : radar) {
+            frame << '|' << row << "|\n";
+        }
+        frame << '+' << std::string(static_cast<std::size_t>(radarWidth), '-')
+              << "+\n"
+              << "COLLISION DETECTED - SIMULATION TERMINATED\n";
+
+        if (redrawInPlace_) {
+            std::cout << "\x1b[H";
+        }
+        std::cout << frame.str() << std::flush;
+        if (animationFrame + 1 < animationFrameCount) {
+            std::this_thread::sleep_for(animationDelay);
+        }
     }
 
+    std::cout << "Collision at x=" << collisionPosition.x
+              << " m, y=" << collisionPosition.y
+              << " m, altitude=" << collisionPosition.z << " m.\n";
+}
+
+void TerminalRadarRenderer::finish() const {
     std::cout << "\nSimulation complete.\n";
 }
 
