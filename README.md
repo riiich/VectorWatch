@@ -1,12 +1,10 @@
 # VectorWatch
 
-VectorWatch 0.2 is a C++20 terminal simulation for predicting the closest point
+VectorWatch is a terminal simulation for predicting the closest point
 of approach (CPA) between two aircraft. It includes a real-time update loop and
-an ASCII radar while keeping the simulation independent of any graphics or web
-framework.
+an ASCII radar while keeping the simulation independent of any graphics (and future web frontend).
 
-All positions and distances use meters. Velocities use meters per second and
-times use seconds.
+All positions and distances use meters. Velocity uses m/s and time use seconds.
 
 ## Build and run
 
@@ -86,7 +84,7 @@ segment for a collision. This prevents accelerated simulation steps from
 skipping over an impact. On collision, the terminal plays a short ASCII
 explosion animation at the impact position and ends the simulation immediately.
 
-## CPA model
+## CPA (Closest Point of Approach) model
 
 For aircraft A and B, the detector first changes the problem into relative
 motion:
@@ -132,55 +130,3 @@ thresholds. When relative velocity is zero or extremely small, division by zero
 is avoided. The aircraft keep their current separation, so the current instant
 is used as their CPA.
 
-## Project layout
-
-```text
-CMakeLists.txt
-include/vectorwatch/
-  app/
-    Application.hpp
-  detection/
-    CollisionDetector.hpp
-    ConflictDetector.hpp
-  math/
-    Vector3.hpp
-  model/
-    Aircraft.hpp
-  scenarios/
-    Scenario.hpp
-    ScenarioCatalog.hpp
-  simulation/
-    TerminalRadarRenderer.hpp
-    TerminalSimulation.hpp
-    TerminalSimulationOptions.hpp
-src/
-  app/Application.cpp
-  detection/CollisionDetector.cpp
-  detection/ConflictDetector.cpp
-  main.cpp
-  model/Aircraft.cpp
-  scenarios/ScenarioCatalog.cpp
-  simulation/TerminalRadarRenderer.cpp
-  simulation/TerminalSimulation.cpp
-tests/
-  CollisionDetectorTests.cpp
-  ConflictDetectorTests.cpp
-```
-
-- `Vector3` supplies the vector operations needed by the CPA calculation.
-- `Aircraft` owns an ID, position, velocity, and the basic position update.
-- `ConflictDetector` performs relative-motion and CPA calculations.
-- `CollisionDetector` detects physical impacts across simulation updates.
-- `ScenarioCatalog` owns the built-in scenario definitions and lookup.
-- `TerminalSimulation` owns the timed update loop.
-- `TerminalRadarRenderer` owns the ASCII radar presentation.
-- `Application` handles CLI commands and coordinates the other components.
-- `main.cpp` is the minimal executable entry point.
-
-## Current scope
-
-This version intentionally has no web framework, GoogleTest, JSON dependency,
-conflict lifecycle, spatial grid, or worker threads. It currently simulates one
-aircraft pair at a time. SFML is not planned; the terminal remains the working
-interface until the engine is ready for a browser visualization. Scenario
-loading and simulation of many aircraft should come before that web interface.
