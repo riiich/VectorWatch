@@ -1,4 +1,4 @@
-# VectorWatch
+# VectorWatch (Jan 2026)
 
 VectorWatch is a terminal simulation for predicting the closest point
 of approach (CPA) between two aircraft. It includes a real-time update loop and
