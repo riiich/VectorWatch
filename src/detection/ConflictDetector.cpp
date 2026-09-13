@@ -1,4 +1,5 @@
 #include "vectorwatch/detection/ConflictDetector.hpp"
+#include "vectorwatch/util/Clamp.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,17 +12,11 @@ constexpr double relativeVelocityEpsilon = 1.0e-6;
 constexpr double relativeVelocityEpsilonSquared =
     relativeVelocityEpsilon * relativeVelocityEpsilon;
 
-struct TimeInterval {
-    double startSeconds{};
-    double endSeconds{};
-    bool exists{};
-};
-
-[[nodiscard]] double horizontalLength(const Vector3& vector) noexcept {
+double horizontalLength(const Vector3& vector) noexcept {
     return std::hypot(vector.x, vector.y);
 }
 
-[[nodiscard]] TimeInterval horizontalViolationInterval(
+TimeWindow horizontalViolationInterval(
     const Vector3& relativePosition,
     const Vector3& relativeVelocity,
     double thresholdMeters,
@@ -39,11 +34,10 @@ struct TimeInterval {
         (relativePosition.y * relativePosition.y);
 
     if (speedSquared < relativeVelocityEpsilonSquared) {
-        return {
-            .startSeconds = 0.0,
-            .endSeconds = lookaheadSeconds,
-            .exists = currentDistanceSquared < thresholdSquared,
-        };
+        return TimeWindow(
+            0.0,
+            lookaheadSeconds,
+            currentDistanceSquared < thresholdSquared);
     }
 
     const double linearCoefficient =
@@ -67,14 +61,10 @@ struct TimeInterval {
     const double startSeconds = std::max(0.0, firstRoot);
     const double endSeconds = std::min(lookaheadSeconds, secondRoot);
 
-    return {
-        .startSeconds = startSeconds,
-        .endSeconds = endSeconds,
-        .exists = startSeconds <= endSeconds,
-    };
+    return TimeWindow(startSeconds, endSeconds, startSeconds <= endSeconds);
 }
 
-[[nodiscard]] TimeInterval verticalViolationInterval(
+TimeWindow verticalViolationInterval(
     const Vector3& relativePosition,
     const Vector3& relativeVelocity,
     double thresholdMeters,
@@ -84,11 +74,10 @@ struct TimeInterval {
     }
 
     if (std::abs(relativeVelocity.z) < relativeVelocityEpsilon) {
-        return {
-            .startSeconds = 0.0,
-            .endSeconds = lookaheadSeconds,
-            .exists = std::abs(relativePosition.z) < thresholdMeters,
-        };
+        return TimeWindow(
+            0.0,
+            lookaheadSeconds,
+            std::abs(relativePosition.z) < thresholdMeters);
     }
 
     const double firstRoot =
@@ -100,14 +89,10 @@ struct TimeInterval {
     const double startSeconds = std::max(0.0, entrySeconds);
     const double endSeconds = std::min(lookaheadSeconds, exitSeconds);
 
-    return {
-        .startSeconds = startSeconds,
-        .endSeconds = endSeconds,
-        .exists = startSeconds <= endSeconds,
-    };
+    return TimeWindow(startSeconds, endSeconds, startSeconds <= endSeconds);
 }
 
-[[nodiscard]] bool violatesThresholdsAt(
+bool violatesThresholdsAt(
     const Vector3& relativePosition,
     const Vector3& relativeVelocity,
     const ConflictThresholds& thresholds,
@@ -118,14 +103,14 @@ struct TimeInterval {
            std::abs(separation.z) < thresholds.verticalMeters;
 }
 
-[[nodiscard]] bool intervalsOverlap(
-    const TimeInterval& horizontalInterval,
-    const TimeInterval& verticalInterval,
+TimeWindow overlappingViolationWindow(
+    const TimeWindow& horizontalInterval,
+    const TimeWindow& verticalInterval,
     const Vector3& relativePosition,
     const Vector3& relativeVelocity,
     const ConflictThresholds& thresholds) noexcept {
     if (!horizontalInterval.exists || !verticalInterval.exists) {
-        return false;
+        return {};
     }
 
     const double overlapStart = std::max(
@@ -136,15 +121,16 @@ struct TimeInterval {
         verticalInterval.endSeconds);
 
     if (overlapStart < overlapEnd) {
-        return true;
+        return TimeWindow(overlapStart, overlapEnd, true);
     }
 
-    return overlapStart == overlapEnd &&
-           violatesThresholdsAt(
-               relativePosition,
-               relativeVelocity,
-               thresholds,
-               overlapStart);
+    const bool overlapExists = overlapStart == overlapEnd &&
+        violatesThresholdsAt(
+            relativePosition,
+            relativeVelocity,
+            thresholds,
+            overlapStart);
+    return TimeWindow(overlapStart, overlapEnd, overlapExists);
 }
 
 } // namespace
@@ -181,7 +167,7 @@ ClosestApproach ConflictDetector::evaluate(
         isWithinLookahead =
             unconstrainedTime >= 0.0 &&
             unconstrainedTime <= config_.lookaheadSeconds;
-        timeSeconds = std::clamp(
+        timeSeconds = clampValue(
             unconstrainedTime,
             0.0,
             config_.lookaheadSeconds);
@@ -193,31 +179,68 @@ ClosestApproach ConflictDetector::evaluate(
         horizontalLength(separationAtClosestApproach);
     const double verticalSeparation =
         std::abs(separationAtClosestApproach.z);
-    const TimeInterval horizontalInterval = horizontalViolationInterval(
+    const double horizontalRelativeSpeedSquared =
+        (relativeVelocity.x * relativeVelocity.x) +
+        (relativeVelocity.y * relativeVelocity.y);
+    const double minimumHorizontalTime =
+        horizontalRelativeSpeedSquared < relativeVelocityEpsilonSquared
+        ? 0.0
+        : clampValue(
+              -((relativePosition.x * relativeVelocity.x) +
+                (relativePosition.y * relativeVelocity.y)) /
+                  horizontalRelativeSpeedSquared,
+              0.0,
+              config_.lookaheadSeconds);
+    const Vector3 horizontalSeparationAtMinimum =
+        relativePosition + (relativeVelocity * minimumHorizontalTime);
+    const double minimumHorizontalSeparation =
+        horizontalLength(horizontalSeparationAtMinimum);
+
+    const double minimumVerticalTime =
+        std::abs(relativeVelocity.z) < relativeVelocityEpsilon
+        ? 0.0
+        : clampValue(
+              -relativePosition.z / relativeVelocity.z,
+              0.0,
+              config_.lookaheadSeconds);
+    const double minimumVerticalSeparation = std::abs(
+        relativePosition.z + (relativeVelocity.z * minimumVerticalTime));
+
+    const TimeWindow horizontalInterval = horizontalViolationInterval(
         relativePosition,
         relativeVelocity,
         config_.thresholds.horizontalMeters,
         config_.lookaheadSeconds);
-    const TimeInterval verticalInterval = verticalViolationInterval(
+    const TimeWindow verticalInterval = verticalViolationInterval(
         relativePosition,
         relativeVelocity,
         config_.thresholds.verticalMeters,
         config_.lookaheadSeconds);
 
-    return {
-        .currentDistanceMeters = std::sqrt(relativePosition.lengthSquared()),
-        .timeSeconds = timeSeconds,
-        .horizontalSeparationMeters = horizontalSeparation,
-        .verticalSeparationMeters = verticalSeparation,
-        .hasRelativeMotion = hasRelativeMotion,
-        .isWithinLookahead = isWithinLookahead,
-        .conflict = intervalsOverlap(
-            horizontalInterval,
-            verticalInterval,
-            relativePosition,
-            relativeVelocity,
-            config_.thresholds),
-    };
+    const TimeWindow conflictWindow = overlappingViolationWindow(
+        horizontalInterval,
+        verticalInterval,
+        relativePosition,
+        relativeVelocity,
+        config_.thresholds);
+
+    ClosestApproach result;
+    result.currentDistanceMeters =
+        std::sqrt(relativePosition.lengthSquared());
+    result.timeSeconds = timeSeconds;
+    result.horizontalSeparationMeters = horizontalSeparation;
+    result.verticalSeparationMeters = verticalSeparation;
+    result.minimumHorizontalSeparationMeters = minimumHorizontalSeparation;
+    result.minimumHorizontalTimeSeconds = minimumHorizontalTime;
+    result.minimumVerticalSeparationMeters = minimumVerticalSeparation;
+    result.minimumVerticalTimeSeconds = minimumVerticalTime;
+    result.horizontalViolationWindow = horizontalInterval;
+    result.verticalViolationWindow = verticalInterval;
+    result.conflictWindow = conflictWindow;
+    result.hasRelativeMotion = hasRelativeMotion;
+    result.isWithinLookahead = isWithinLookahead;
+    result.conflict = conflictWindow.exists;
+    return result;
 }
 
 } // namespace vectorwatch

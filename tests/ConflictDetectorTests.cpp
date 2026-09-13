@@ -1,12 +1,16 @@
 #include "vectorwatch/detection/ConflictDetector.hpp"
 
 #include "CollisionDetectorTests.hpp"
+#include "CommandLineOptionsTests.hpp"
+#include "PredictionEngineTests.hpp"
+#include "RandomEncounterTests.hpp"
+#include "SimulationSessionTests.hpp"
+#include "ThreadedSimulationPipelineTests.hpp"
 
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-#include <string_view>
 
 namespace {
 
@@ -18,7 +22,7 @@ using vectorwatch::Vector3;
 
 int failureCount = 0;
 
-void expect(bool condition, std::string_view testName) {
+void expect(bool condition, const char* testName) {
     if (!condition) {
         std::cerr << "FAIL: " << testName << '\n';
         ++failureCount;
@@ -29,11 +33,11 @@ void expectNear(
     double actual,
     double expected,
     double tolerance,
-    std::string_view testName) {
+    const char* testName) {
     expect(std::abs(actual - expected) <= tolerance, testName);
 }
 
-[[nodiscard]] ClosestApproach evaluate(
+ClosestApproach evaluate(
     Vector3 positionA,
     Vector3 velocityA,
     Vector3 positionB,
@@ -103,6 +107,27 @@ void testOverlappingDangerWindows() {
     expect(
         result.conflict,
         "overlapping horizontal and vertical danger windows conflict");
+    expect(result.conflictWindow.exists, "conflict exposes overlap window");
+    expectNear(
+        result.conflictWindow.startSeconds,
+        11.0,
+        1.0e-9,
+        "conflict window starts when both thresholds are violated");
+    expectNear(
+        result.conflictWindow.endSeconds,
+        15.0,
+        1.0e-9,
+        "conflict window ends at first threshold exit");
+    expectNear(
+        result.minimumHorizontalTimeSeconds,
+        10.0,
+        1.0e-9,
+        "horizontal minimum has independent time");
+    expectNear(
+        result.minimumVerticalTimeSeconds,
+        14.0,
+        1.0e-9,
+        "vertical minimum has independent time");
 }
 
 void testSeparatedDangerWindows() {
@@ -115,6 +140,9 @@ void testSeparatedDangerWindows() {
     expect(
         !result.conflict,
         "non-overlapping horizontal and vertical danger windows are safe");
+    expect(
+        !result.conflictWindow.exists,
+        "separated danger windows expose no conflict window");
 }
 
 void testVerticalSeparationIsSafe() {
@@ -152,7 +180,7 @@ void testConflictOutsideLookahead() {
     const auto result = evaluate(
         {-30'000.0, 0.0, 10'000.0},
         {100.0, 0.0, 0.0},
-        {30'000.0, 0.0, 10'000.0},
+        {30'000.0, 600.0, 10'080.0},
         {-100.0, 0.0, 0.0});
 
     expect(!result.conflict, "conflict beyond lookahead is ignored");
@@ -208,18 +236,17 @@ void testInvalidConfiguration() {
     bool nonFiniteThresholdRejected = false;
 
     try {
-        static_cast<void>(ConflictDetector{DetectorConfig{.lookaheadSeconds = -1.0}});
+        static_cast<void>(ConflictDetector{DetectorConfig(-1.0)});
     } catch (const std::invalid_argument&) {
         negativeLookaheadRejected = true;
     }
 
     try {
-        static_cast<void>(ConflictDetector{DetectorConfig{
-            .thresholds = {
-                .horizontalMeters = std::numeric_limits<double>::infinity(),
-                .verticalMeters = 150.0,
-            },
-        }});
+        static_cast<void>(ConflictDetector{DetectorConfig(
+            120.0,
+            vectorwatch::ConflictThresholds(
+                std::numeric_limits<double>::infinity(),
+                150.0))});
     } catch (const std::invalid_argument&) {
         nonFiniteThresholdRejected = true;
     }
@@ -232,6 +259,11 @@ void testInvalidConfiguration() {
 
 int main() {
     failureCount += runCollisionDetectorTests();
+    failureCount += runCommandLineOptionsTests();
+    failureCount += runPredictionEngineTests();
+    failureCount += runRandomEncounterTests();
+    failureCount += runSimulationSessionTests();
+    failureCount += runThreadedSimulationPipelineTests();
     testHeadOnConflict();
     testNearMissConflict();
     testStaggeredCrossingIsSafe();

@@ -1,24 +1,27 @@
 # VectorWatch (Jan 2026)
 
-VectorWatch is a terminal simulation for predicting the closest point
-of approach (CPA) between two aircraft. It includes a real-time update loop and
-an ASCII radar while keeping the simulation independent of any graphics (and future web frontend).
+VectorWatch is an aircraft-conflict simulation with deterministic and
+Monte Carlo prediction, built in C++14. Two aircraft travel through a shared waypoint while the
+engine continuously estimates loss-of-separation and physical-collision risk.
+It supports a sequential reference loop and a threaded real-time pipeline while
+keeping the engine independent of the terminal frontend.
 
 All positions and distances use meters. Velocity uses m/s and time use seconds.
 
 ## Build and run
-
-Requirements:
-
-- Linux
-- CMake 3.20 or newer
-- A C++20 compiler such as GCC 10 or newer or Clang 10 or newer
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/vectorwatch
+```
+
+```powershell
+cmake -S . -B build
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
+.\build\Debug\vectorwatch.exe --help
 ```
 
 Running without an argument evaluates every built-in scenario. Run one
@@ -28,6 +31,7 @@ scenario by name with:
 ./build/vectorwatch head-on
 ./build/vectorwatch parallel
 ./build/vectorwatch crossing
+./build/vectorwatch initial-collision
 ./build/vectorwatch different-altitudes
 ./build/vectorwatch near-miss
 ./build/vectorwatch staggered-crossing
@@ -71,6 +75,66 @@ At 1x, one real second equals one simulated second. Higher values accelerate
 the same simulation calculations; they do not skip directly to a stored result.
 Use `Ctrl+C` to stop a running simulation early.
 
+Generate a new shared-waypoint encounter with randomized aircraft airspeed,
+crossing approach headings, vertical rates, wind strength and direction, and arrival
+timing on every run:
+
+```bash
+./build/vectorwatch --simulate random-encounter
+```
+
+Both nominal ground-velocity paths reach the waypoint. Collision scenarios give
+the aircraft the same arrival time; pass scenarios use different arrival times
+and crossing paths. This deliberately creates useful demo outcomes and is not a
+model of real-world collision frequency. The terminal shows each aircraft's
+original through-air velocity, actual ground-velocity vector and speed,
+whether the wind acts as a headwind, tailwind, or crosswind, and an air-current
+direction indicator inside the radar. Ground velocity is calculated as:
+
+```text
+ground velocity = air velocity + wind velocity
+```
+
+The radar prints the generated seed. Pass it after the speed multiplier to
+replay the exact encounter:
+
+```bash
+./build/vectorwatch --simulate random-encounter --scenario-seed 10
+```
+
+Request a collision or pass construction explicitly with `--outcome collision`
+or `--outcome pass`.
+
+## Probabilistic prediction
+
+Run the sequential Monte Carlo reference implementation with:
+
+```bash
+./build/vectorwatch --simulate random-encounter \
+  --prediction probabilistic \
+  --execution sequential \
+  --samples 10000 \
+  --scenario-seed 42 \
+  --uncertainty-seed 99 \
+  --uncertainty medium
+```
+
+Each sample perturbs horizontal position, altitude, airspeed, heading, vertical
+rate, and shared wind, then runs the deterministic detectors over the same
+120-second lookahead. Samples use truncated Gaussian demonstration profiles;
+they are not calibrated aviation measurement models.
+
+The risk banner maps estimated loss-of-separation probability as follows:
+
+```text
+below 5%       LOW RISK
+5% to 69.9%   POTENTIAL CONFLICT
+70% or above  HIGHLY LIKELY CONFLICT
+```
+
+Physical-collision probability is displayed separately. Only collision along
+the nominal simulated trajectory triggers the explosion.
+
 ## Collision handling
 
 Conflict prediction and physical collision are separate concepts. A conflict
@@ -82,7 +146,9 @@ or an operational aviation standard.
 Before applying each movement update, the simulation checks the complete motion
 segment for a collision. This prevents accelerated simulation steps from
 skipping over an impact. On collision, the terminal plays a short ASCII
-explosion animation at the impact position and ends the simulation immediately.
+explosion animation with orange particles at the impact position, reports
+`Status: CRASHED`, and ends the simulation immediately. Every collision path
+uses the same reusable explosion-frame renderer.
 
 ## CPA (Closest Point of Approach) model
 
@@ -129,4 +195,3 @@ convergence, and cases where the minimum 3D distance is not itself inside both
 thresholds. When relative velocity is zero or extremely small, division by zero
 is avoided. The aircraft keep their current separation, so the current instant
 is used as their CPA.
-

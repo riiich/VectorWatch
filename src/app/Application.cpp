@@ -1,15 +1,16 @@
 #include "vectorwatch/app/Application.hpp"
 
+#include "vectorwatch/app/BenchmarkRunner.hpp"
+#include "vectorwatch/app/CommandLineOptions.hpp"
 #include "vectorwatch/detection/ConflictDetector.hpp"
+#include "vectorwatch/scenarios/RandomEncounterGenerator.hpp"
 #include "vectorwatch/scenarios/ScenarioCatalog.hpp"
 #include "vectorwatch/simulation/TerminalSimulation.hpp"
 
-#include <charconv>
-#include <cmath>
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
-#include <optional>
-#include <string_view>
+#include <string>
 
 namespace vectorwatch {
 namespace {
@@ -26,11 +27,25 @@ void printResult(const Scenario& scenario, const ClosestApproach& result) {
               << result.horizontalSeparationMeters / 1'000.0 << " km\n"
               << "V-CPA (Vertical Separation at Closest Point of Approach): "
               << result.verticalSeparationMeters << " m\n"
+              << "Minimum horizontal separation: "
+              << result.minimumHorizontalSeparationMeters << " m at "
+              << result.minimumHorizontalTimeSeconds << " s\n"
+              << "Minimum vertical separation: "
+              << result.minimumVerticalSeparationMeters << " m at "
+              << result.minimumVerticalTimeSeconds << " s\n"
               << "Relative motion: "
               << (result.hasRelativeMotion ? "yes" : "no") << '\n'
               << "CPA inside lookahead: "
               << (result.isWithinLookahead ? "yes" : "no") << '\n'
               << "Conflict: " << (result.conflict ? "YES" : "NO") << '\n'
+              << "Conflict window: ";
+    if (result.conflictWindow.exists) {
+        std::cout << result.conflictWindow.startSeconds << " to "
+                  << result.conflictWindow.endSeconds << " s\n";
+    } else {
+        std::cout << "none\n";
+    }
+    std::cout
               << "Expected: "
               << (scenario.expectedConflict ? "CONFLICT" : "NO CONFLICT")
               << " [" << (result.conflict == scenario.expectedConflict ? "PASS" : "FAIL")
@@ -43,13 +58,44 @@ void printScenarioList() {
         std::cout << "  " << std::left << std::setw(24) << scenario.name
                   << scenario.description << '\n';
     }
-    std::cout << std::right;
+    std::cout << std::right
+              << "\nRuntime simulations\n"
+              << "  " << std::left << std::setw(24) << "random-encounter"
+              << "Generate aircraft motion and wind from a new random seed.\n"
+              << std::right;
 }
 
-void printUsage(std::string_view executable) {
+WorldBounds encounterWorldBounds(
+    const RandomEncounter& encounter) {
+    const double minimumX = std::min({
+        encounter.aircraftA.position().x,
+        encounter.aircraftB.position().x,
+        encounter.waypoint.x});
+    const double maximumX = std::max({
+        encounter.aircraftA.position().x,
+        encounter.aircraftB.position().x,
+        encounter.waypoint.x});
+    const double minimumY = std::min({
+        encounter.aircraftA.position().y,
+        encounter.aircraftB.position().y,
+        encounter.waypoint.y});
+    const double maximumY = std::max({
+        encounter.aircraftA.position().y,
+        encounter.aircraftB.position().y,
+        encounter.waypoint.y});
+    const double xPadding = std::max((maximumX - minimumX) * 0.1, 1'000.0);
+    const double yPadding = std::max((maximumY - minimumY) * 0.1, 1'000.0);
+    return WorldBounds(
+        minimumX - xPadding,
+        maximumX + xPadding,
+        minimumY - yPadding,
+        maximumY + yPadding);
+}
+
+void printUsage(const std::string& executable) {
     std::cout << "Usage:\n"
               << "  " << executable << " [scenario]\n"
-              << "  " << executable << " --simulate [scenario] [speed]\n"
+              << "  " << executable << " --simulate [scenario] [options]\n"
               << "  " << executable << " --list-scenarios\n\n";
     printScenarioList();
     std::cout << "\nCommands:\n"
@@ -58,25 +104,26 @@ void printUsage(std::string_view executable) {
               << "  " << executable << " <scenario>\n"
               << "      Run one scenario as a one-shot check.\n"
               << "  " << executable << " --simulate <scenario> [speed]\n"
-              << "      Animate one scenario in the terminal.\n\n"
+              << "      Animate one built-in scenario in the terminal.\n"
+              << "  " << executable
+              << " --simulate random-encounter [speed] [seed]\n"
+              << "      Generate and animate a random encounter. A seed reproduces it.\n"
+              << "      --prediction deterministic|probabilistic\n"
+              << "      --execution sequential|threaded\n"
+              << "      --threads N|auto --samples N\n"
+              << "      --scenario-seed N --uncertainty-seed N\n"
+              << "      --uncertainty low|medium|high\n"
+              << "      --outcome any|collision|pass\n\n"
+              << "  " << executable
+              << " --benchmark [--samples N] [--repetitions N]"
+                 " [--threads 1,2,4,auto]\n"
               << "Terminal simulation defaults to head-on at 5x speed.\n";
-}
-
-[[nodiscard]] std::optional<double> parsePositiveDouble(std::string_view text) {
-    double value = 0.0;
-    const char* const end = text.data() + text.size();
-    const auto [position, error] = std::from_chars(text.data(), end, value);
-    if (error != std::errc{} || position != end || !std::isfinite(value) ||
-        value <= 0.0) {
-        return std::nullopt;
-    }
-    return value;
 }
 
 } // namespace
 
 int Application::run(int argc, char* argv[]) const {
-    const std::string_view requestedScenario = argc > 1 ? argv[1] : "all";
+    const std::string requestedScenario = argc > 1 ? argv[1] : "all";
 
     if (requestedScenario == "--help" || requestedScenario == "-h") {
         printUsage(argv[0]);
@@ -89,41 +136,65 @@ int Application::run(int argc, char* argv[]) const {
         return 0;
     }
 
+    if (requestedScenario == "--benchmark") {
+        return runPredictionBenchmark(argc, argv);
+    }
+
     const ConflictDetector detector{};
 
     if (requestedScenario == "--simulate") {
-        if (argc > 4) {
-            std::cerr << "Too many arguments for terminal simulation.\n\n";
+        const CommandLineParseResult parsed = parseSimulationCommand(argc, argv);
+        if (!parsed.options.hasValue()) {
+            std::cerr << parsed.error << "\n\n";
             printUsage(argv[0]);
             return 2;
         }
+        const SimulationCommandOptions& command = *parsed.options;
 
-        const std::string_view simulationScenario =
-            argc > 2 ? argv[2] : "head-on";
-        const Scenario* const scenario = ScenarioCatalog::find(simulationScenario);
-        if (scenario == nullptr) {
+        const std::string simulationScenario = command.scenarioName;
+        const bool randomEncounter = simulationScenario == "random-encounter";
+        const Scenario* const scenario = randomEncounter
+            ? nullptr
+            : ScenarioCatalog::find(simulationScenario);
+        if (!randomEncounter && scenario == nullptr) {
             std::cerr << "Unknown simulation scenario: "
                       << simulationScenario << "\n\n";
             printUsage(argv[0]);
             return 2;
         }
 
-        TerminalSimulationOptions options{};
-        if (argc > 3) {
-            const std::optional<double> speed = parsePositiveDouble(argv[3]);
-            if (!speed.has_value()) {
-                std::cerr << "Simulation speed must be a positive number.\n";
-                return 2;
-            }
-            options.speedMultiplier = *speed;
+        if (!randomEncounter && command.scenarioSeed.hasValue()) {
+            std::cerr << "A scenario seed is only valid for random-encounter.\n";
+            return 2;
+        }
+        if (!randomEncounter &&
+            command.requestedOutcome != RandomEncounterOutcome::Any) {
+            std::cerr << "A requested outcome is only valid for random-encounter.\n";
+            return 2;
         }
 
-        const TerminalSimulation simulation{detector};
-        simulation.run(
-            scenario->name,
+        const TerminalSimulation simulation{};
+        TerminalSimulationOptions options = command.simulation;
+        if (randomEncounter) {
+            const RandomEncounter encounter = RandomEncounterGenerator::generate(
+                command.scenarioSeed,
+                command.requestedOutcome);
+            options.waypoint = encounter.waypoint;
+            options.worldBounds = encounterWorldBounds(encounter);
+            options.durationSeconds = 120.0;
+            options.windVelocity = encounter.windVelocity;
+            options.randomSeed = encounter.seed;
+            static_cast<void>(simulation.run(
+                encounter.aircraftA,
+                encounter.aircraftB,
+                options));
+            return 0;
+        }
+
+        static_cast<void>(simulation.run(
             scenario->aircraftA,
             scenario->aircraftB,
-            options);
+            options));
         return 0;
     }
 

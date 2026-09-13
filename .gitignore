@@ -1,5 +1,1 @@
-/build/
-
-# Local AI tooling used for this project
-.agents/
-.codex/
+/build*

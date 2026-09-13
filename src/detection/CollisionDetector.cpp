@@ -17,12 +17,12 @@ CollisionDetector::CollisionDetector(CollisionConfig config) : config_{config} {
     }
 }
 
-std::optional<Collision> CollisionDetector::predict(
+Optional<Collision> CollisionDetector::predict(
     const Aircraft& aircraftA,
     const Aircraft& aircraftB,
     double horizonSeconds) const noexcept {
     if (!std::isfinite(horizonSeconds) || horizonSeconds < 0.0) {
-        return std::nullopt;
+        return Optional<Collision>();
     }
 
     const Vector3 relativePosition = aircraftB.position() - aircraftA.position();
@@ -35,7 +35,7 @@ std::optional<Collision> CollisionDetector::predict(
     double collisionTimeSeconds = 0.0;
     if (currentDistanceSquared > collisionDistanceSquared) {
         if (relativeSpeedSquared < relativeVelocityEpsilonSquared) {
-            return std::nullopt;
+            return Optional<Collision>();
         }
 
         const double linearCoefficient =
@@ -46,7 +46,7 @@ std::optional<Collision> CollisionDetector::predict(
             (linearCoefficient * linearCoefficient) -
             (4.0 * relativeSpeedSquared * constantCoefficient);
         if (discriminant < 0.0) {
-            return std::nullopt;
+            return Optional<Collision>();
         }
 
         collisionTimeSeconds =
@@ -54,7 +54,7 @@ std::optional<Collision> CollisionDetector::predict(
             (2.0 * relativeSpeedSquared);
         if (collisionTimeSeconds < 0.0 ||
             collisionTimeSeconds > horizonSeconds) {
-            return std::nullopt;
+            return Optional<Collision>();
         }
     }
 
@@ -62,10 +62,9 @@ std::optional<Collision> CollisionDetector::predict(
         aircraftA.position() + (aircraftA.velocity() * collisionTimeSeconds);
     const Vector3 positionB =
         aircraftB.position() + (aircraftB.velocity() * collisionTimeSeconds);
-    return Collision{
-        .timeSeconds = collisionTimeSeconds,
-        .position = (positionA + positionB) * 0.5,
-    };
+    return Collision(
+        collisionTimeSeconds,
+        (positionA + positionB) * 0.5);
 }
 
 } // namespace vectorwatch

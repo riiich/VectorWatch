@@ -8,9 +8,9 @@ class Aircraft {
 public:
     Aircraft(int id, Vector3 position, Vector3 velocity) noexcept;
 
-    [[nodiscard]] int id() const noexcept;
-    [[nodiscard]] const Vector3& position() const noexcept;
-    [[nodiscard]] const Vector3& velocity() const noexcept;
+    int id() const noexcept;
+    const Vector3& position() const noexcept;
+    const Vector3& velocity() const noexcept;
 
     void update(double deltaTimeSeconds) noexcept;
 

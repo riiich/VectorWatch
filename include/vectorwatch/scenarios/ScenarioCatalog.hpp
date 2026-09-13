@@ -2,15 +2,15 @@
 
 #include "vectorwatch/scenarios/Scenario.hpp"
 
-#include <span>
-#include <string_view>
+#include <string>
+#include <vector>
 
 namespace vectorwatch {
 
 class ScenarioCatalog {
 public:
-    [[nodiscard]] static std::span<const Scenario> all() noexcept;
-    [[nodiscard]] static const Scenario* find(std::string_view name) noexcept;
+    static const std::vector<Scenario>& all() noexcept;
+    static const Scenario* find(const std::string& name) noexcept;
 };
 
 } // namespace vectorwatch

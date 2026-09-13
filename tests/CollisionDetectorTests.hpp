@@ -1,3 +1,3 @@
 #pragma once
 
-[[nodiscard]] int runCollisionDetectorTests();
+int runCollisionDetectorTests();

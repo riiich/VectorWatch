@@ -4,7 +4,6 @@
 
 #include <cmath>
 #include <iostream>
-#include <string_view>
 
 namespace {
 
@@ -14,7 +13,7 @@ using vectorwatch::Vector3;
 
 int failureCount = 0;
 
-void expect(bool condition, std::string_view testName) {
+void expect(bool condition, const char* testName) {
     if (!condition) {
         std::cerr << "FAIL: " << testName << '\n';
         ++failureCount;
@@ -25,7 +24,7 @@ void expectNear(
     double actual,
     double expected,
     double tolerance,
-    std::string_view testName) {
+    const char* testName) {
     expect(std::abs(actual - expected) <= tolerance, testName);
 }
 
@@ -43,8 +42,8 @@ int runCollisionDetectorTests() {
         Vector3{-200.0, 0.0, 0.0}};
 
     const auto collision = detector.predict(headOnA, headOnB, 60.0);
-    expect(collision.has_value(), "head-on collision detected across time step");
-    if (collision.has_value()) {
+    expect(collision.hasValue(), "head-on collision detected across time step");
+    if (collision.hasValue()) {
         expectNear(
             collision->timeSeconds,
             49.875,
@@ -59,7 +58,7 @@ int runCollisionDetectorTests() {
     }
 
     expect(
-        !detector.predict(headOnA, headOnB, 40.0).has_value(),
+        !detector.predict(headOnA, headOnB, 40.0).hasValue(),
         "collision beyond time step is ignored");
 
     const Aircraft nearMissB{
@@ -67,7 +66,7 @@ int runCollisionDetectorTests() {
         Vector3{10'000.0, 600.0, 10'080.0},
         Vector3{-200.0, 0.0, 0.0}};
     expect(
-        !detector.predict(headOnA, nearMissB, 60.0).has_value(),
+        !detector.predict(headOnA, nearMissB, 60.0).hasValue(),
         "separation conflict is not treated as physical collision");
 
     const Aircraft crossingA{
@@ -79,8 +78,33 @@ int runCollisionDetectorTests() {
         Vector3{0.0, -10'000.0, 10'000.0},
         Vector3{0.0, 200.0, 0.0}};
     expect(
-        detector.predict(crossingA, crossingB, 60.0).has_value(),
+        detector.predict(crossingA, crossingB, 60.0).hasValue(),
         "crossing collision detected");
+
+    const Aircraft overlappingA{
+        1,
+        Vector3{100.0, 200.0, 10'000.0},
+        Vector3{200.0, 0.0, 0.0}};
+    const Aircraft overlappingB{
+        2,
+        Vector3{120.0, 200.0, 10'000.0},
+        Vector3{200.0, 0.0, 0.0}};
+    const auto initialCollision = detector.predict(overlappingA, overlappingB, 0.0);
+    expect(
+        initialCollision.hasValue(),
+        "aircraft already inside collision radius are detected immediately");
+    if (initialCollision.hasValue()) {
+        expectNear(
+            initialCollision->timeSeconds,
+            0.0,
+            1.0e-9,
+            "initial collision time");
+        expectNear(
+            initialCollision->position.x,
+            110.0,
+            1.0e-9,
+            "initial collision position");
+    }
 
     if (failureCount != 0) {
         std::cerr << failureCount << " collision detector test(s) failed.\n";
