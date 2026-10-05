@@ -1,6 +1,7 @@
 #include "vectorwatch/simulation/TerminalRadarRenderer.hpp"
 
 #include "vectorwatch/platform/TerminalCapabilities.hpp"
+#include "vectorwatch/simulation/RadarBounds.hpp"
 #include "vectorwatch/util/Clamp.hpp"
 
 #include <algorithm>
@@ -23,7 +24,7 @@ constexpr int speedBarWidth = 20;
 constexpr double speedBarMaximumMetersPerSecond = 300.0;
 
 double speed(const Vector3& velocity) noexcept {
-    return std::sqrt(velocity.lengthSquared());
+    return velocity.length();
 }
 
 std::string speedBar(double metersPerSecond) {
@@ -148,34 +149,12 @@ TerminalRadarRenderer::TerminalRadarRenderer(
     const Aircraft& aircraftB,
     const TerminalSimulationOptions& options)
     : redrawInPlace_{terminalSupportsInPlaceRendering()} {
-    if (options.worldBounds.hasValue()) {
-        minimumX_ = options.worldBounds->minimumX;
-        maximumX_ = options.worldBounds->maximumX;
-        minimumY_ = options.worldBounds->minimumY;
-        maximumY_ = options.worldBounds->maximumY;
-        return;
-    }
-
-    const Vector3 endA =
-        aircraftA.position() + (aircraftA.velocity() * options.durationSeconds);
-    const Vector3 endB =
-        aircraftB.position() + (aircraftB.velocity() * options.durationSeconds);
-
-    minimumX_ = std::min(
-        {aircraftA.position().x, aircraftB.position().x, endA.x, endB.x});
-    maximumX_ = std::max(
-        {aircraftA.position().x, aircraftB.position().x, endA.x, endB.x});
-    minimumY_ = std::min(
-        {aircraftA.position().y, aircraftB.position().y, endA.y, endB.y});
-    maximumY_ = std::max(
-        {aircraftA.position().y, aircraftB.position().y, endA.y, endB.y});
-
-    const double xPadding = std::max((maximumX_ - minimumX_) * 0.1, 1'000.0);
-    const double yPadding = std::max((maximumY_ - minimumY_) * 0.1, 1'000.0);
-    minimumX_ -= xPadding;
-    maximumX_ += xPadding;
-    minimumY_ -= yPadding;
-    maximumY_ += yPadding;
+    const auto bounds = radarBoundsFor(
+        aircraftA, aircraftB, options.durationSeconds, options.worldBounds);
+    minimumX_ = bounds.minimumX;
+    maximumX_ = bounds.maximumX;
+    minimumY_ = bounds.minimumY;
+    maximumY_ = bounds.maximumY;
 }
 
 void TerminalRadarRenderer::prepareTerminal() const {

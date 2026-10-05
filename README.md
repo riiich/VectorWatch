@@ -195,3 +195,7 @@ convergence, and cases where the minimum 3D distance is not itself inside both
 thresholds. When relative velocity is zero or extremely small, division by zero
 is avoided. The aircraft keep their current separation, so the current instant
 is used as their CPA.
+
+## Web interface
+
+The React + ASP.NET Core 10 MVP reuses the C++ engine through a native bridge. It supports built-in and seeded random encounters, deterministic/probabilistic predictions, independent browser tabs, Start/Stop/Replay and live SVG radar/telemetry. See [web/README.md](web/README.md) for prerequisites, local startup, native library loading and integration checks.

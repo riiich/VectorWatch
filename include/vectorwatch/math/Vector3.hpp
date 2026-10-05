@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 namespace vectorwatch {
 
 struct Vector3 {
@@ -31,6 +33,10 @@ struct Vector3 {
 
     constexpr double lengthSquared() const noexcept {
         return dot(*this);
+    }
+
+    double length() const noexcept {
+        return std::sqrt(lengthSquared());
     }
 };
 

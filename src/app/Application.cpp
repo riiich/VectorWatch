@@ -3,11 +3,10 @@
 #include "vectorwatch/app/BenchmarkRunner.hpp"
 #include "vectorwatch/app/CommandLineOptions.hpp"
 #include "vectorwatch/detection/ConflictDetector.hpp"
-#include "vectorwatch/scenarios/RandomEncounterGenerator.hpp"
+#include "vectorwatch/scenarios/ScenarioSetup.hpp"
 #include "vectorwatch/scenarios/ScenarioCatalog.hpp"
 #include "vectorwatch/simulation/TerminalSimulation.hpp"
 
-#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -63,33 +62,6 @@ void printScenarioList() {
               << "  " << std::left << std::setw(24) << "random-encounter"
               << "Generate aircraft motion and wind from a new random seed.\n"
               << std::right;
-}
-
-WorldBounds encounterWorldBounds(
-    const RandomEncounter& encounter) {
-    const double minimumX = std::min({
-        encounter.aircraftA.position().x,
-        encounter.aircraftB.position().x,
-        encounter.waypoint.x});
-    const double maximumX = std::max({
-        encounter.aircraftA.position().x,
-        encounter.aircraftB.position().x,
-        encounter.waypoint.x});
-    const double minimumY = std::min({
-        encounter.aircraftA.position().y,
-        encounter.aircraftB.position().y,
-        encounter.waypoint.y});
-    const double maximumY = std::max({
-        encounter.aircraftA.position().y,
-        encounter.aircraftB.position().y,
-        encounter.waypoint.y});
-    const double xPadding = std::max((maximumX - minimumX) * 0.1, 1'000.0);
-    const double yPadding = std::max((maximumY - minimumY) * 0.1, 1'000.0);
-    return WorldBounds(
-        minimumX - xPadding,
-        maximumX + xPadding,
-        minimumY - yPadding,
-        maximumY + yPadding);
 }
 
 void printUsage(const std::string& executable) {
@@ -176,18 +148,14 @@ int Application::run(int argc, char* argv[]) const {
         const TerminalSimulation simulation{};
         TerminalSimulationOptions options = command.simulation;
         if (randomEncounter) {
-            const RandomEncounter encounter = RandomEncounterGenerator::generate(
-                command.scenarioSeed,
-                command.requestedOutcome);
-            options.waypoint = encounter.waypoint;
-            options.worldBounds = encounterWorldBounds(encounter);
-            options.durationSeconds = 120.0;
-            options.windVelocity = encounter.windVelocity;
-            options.randomSeed = encounter.seed;
-            static_cast<void>(simulation.run(
-                encounter.aircraftA,
-                encounter.aircraftB,
-                options));
+            const ScenarioSetup setup = prepareScenario(
+                simulationScenario, command.scenarioSeed, command.requestedOutcome);
+            options.waypoint = setup.waypoint;
+            options.worldBounds = setup.worldBounds;
+            options.durationSeconds = setup.durationSeconds;
+            options.windVelocity = setup.windVelocity;
+            options.randomSeed = setup.seed;
+            static_cast<void>(simulation.run(setup.aircraftA, setup.aircraftB, options));
             return 0;
         }
 

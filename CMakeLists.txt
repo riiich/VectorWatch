@@ -66,10 +66,13 @@ add_library(vectorwatch_core
     src/prediction/PredictionEngine.cpp
     src/prediction/PredictionWorkerPool.cpp
     src/scenarios/RandomEncounterGenerator.cpp
+    src/scenarios/ScenarioCatalog.cpp
+    src/scenarios/ScenarioSetup.cpp
     src/simulation/SimulationSession.cpp
     src/simulation/ThreadedSimulationPipeline.cpp
 )
 
+set_target_properties(vectorwatch_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(vectorwatch_core PUBLIC include)
 target_compile_features(vectorwatch_core PUBLIC cxx_std_14)
 set_target_properties(
@@ -88,7 +91,6 @@ add_executable(vectorwatch
     src/app/BenchmarkRunner.cpp
     src/main.cpp
     src/platform/TerminalCapabilities.cpp
-    src/scenarios/ScenarioCatalog.cpp
     src/simulation/TerminalRadarRenderer.cpp
     src/simulation/TerminalSimulation.cpp
 )
@@ -256,3 +258,10 @@ if(BUILD_TESTING)
             TIMEOUT 10
     )
 endif()
+
+add_library(vectorwatch_native SHARED src/bridge/VectorWatchBridge.cpp)
+target_link_libraries(vectorwatch_native PRIVATE vectorwatch_core)
+target_compile_definitions(vectorwatch_native PRIVATE VECTORWATCH_BRIDGE_EXPORTS)
+set_target_properties(vectorwatch_native PROPERTIES CXX_STANDARD 14 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
+vectorwatch_enable_warnings(vectorwatch_native)
+vectorwatch_enable_sanitizers(vectorwatch_native)

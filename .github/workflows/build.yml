@@ -41,3 +41,26 @@ jobs:
         run: cmake --build build-${{ matrix.sanitizer }} --parallel
       - name: Test
         run: ctest --test-dir build-${{ matrix.sanitizer }} --output-on-failure
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/client/package-lock.json
+      - name: Build native bridge
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel
+      - name: Native ABI checks
+        run: python3 web/tests/native_integration.py "$PWD/build/libvectorwatch_native.so"
+      - name: Install client dependencies
+        run: npm --prefix web/client ci
+      - name: Build client and server
+        run: npm --prefix web/client run build && dotnet build web/server
+      - name: SignalR integration checks
+        run: npm --prefix web/client run test:integration
