@@ -8,6 +8,15 @@ keeping the engine independent of the terminal frontend.
 
 All positions and distances use meters. Velocity uses m/s and time use seconds.
 
+## Video Demonstration
+
+
+https://github.com/user-attachments/assets/8bcafbd3-1b0f-4124-841a-a4bb4a570c59
+
+
+
+
+
 ## Build and run
 
 ```bash
